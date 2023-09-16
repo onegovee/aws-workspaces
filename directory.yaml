@@ -39,6 +39,12 @@ Parameters:
   PublicSubnet1Id:
     Type: AWS::EC2::Subnet::Id
 
+  DirectoryType:
+    Type: String
+    AllowedValues:
+      - Samba
+      - Microsoft
+
   DirectoryName:
     Type: String
   
@@ -47,6 +53,8 @@ Parameters:
 
 Conditions:
   CreateAdminInstance: !Equals [ !Ref AdminInstanceToggle, On ]
+  CreateSambaDirectory: !Equals [ !Ref DirectoryType, Samba ]
+  CreateMicrosoftDirectory: !Equals [ !Ref DirectoryType, Microsoft ]
 
 Resources:
   LogGroup:
@@ -75,7 +83,8 @@ Resources:
             Action:
               - sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonSSMDirectoryServiceAccess 
   
   SsmDocument:
     Type: "AWS::SSM::Document"
@@ -165,25 +174,32 @@ Resources:
       InstanceType: t2.medium
       ImageId: !Ref AdminInstanceImageId
       SubnetId: !Ref PublicSubnet1Id
+      
       SecurityGroupIds:
         - !GetAtt AdminSG.GroupId
       KeyName: !Ref KeyName
-      SsmAssociations:
-        -
-          DocumentName: !Ref SsmDocument
-          AssociationParameters:
-            -
-              Key: "directoryId"
-              Value: 
-                - !Ref MicrosoftAD1
-            -
-              Key: "directoryName"
-              Value: 
-                - !Ref DirectoryName
-            -
-              Key: "dnsIpAddresses"
-              Value: 
-                - !GetAtt MicrosoftAD1.DnsIpAddresses     
+      # SsmAssociations:
+      #   -
+      #     DocumentName: !Ref SsmDocument
+      #     AssociationParameters:
+      #       -
+      #         Key: "directoryId"
+      #         Value: 
+      #           - !If
+      #             - CreateMicrosoftDirectory
+      #             - !Ref MicrosoftAD1
+      #             - !Ref SimpleAD1
+      #       -
+      #         Key: "directoryName"
+      #         Value: 
+      #           - !Ref DirectoryName
+      #       -
+      #         Key: "dnsIpAddresses"
+      #         Value: 
+      #           - !If
+      #             - CreateMicrosoftDirectory
+      #             - !GetAtt MicrosoftAD1.DnsIpAddresses  
+      #             - !GetAtt SimpleAD1.DnsIpAddresses
       UserData:
         Fn::Base64:
           !Sub |
@@ -209,8 +225,23 @@ Resources:
 
   MicrosoftAD1: 
     Type: AWS::DirectoryService::MicrosoftAD
+    Condition: CreateMicrosoftDirectory
     Properties: 
       Edition: Standard
+      Name: !Ref DirectoryName
+      Password: !Ref AdminPwd
+      ShortName: !Ref DirectoryAlias
+      VpcSettings: 
+        SubnetIds:
+          - !Ref PrivateSubnet1Id
+          - !Ref PrivateSubnet2Id
+        VpcId: !Ref VpcId
+
+  SimpleAD1:
+    Type: AWS::DirectoryService::SimpleAD
+    Condition: CreateSambaDirectory
+    Properties:
+      Size: Small
       Name: !Ref DirectoryName
       Password: !Ref AdminPwd
       ShortName: !Ref DirectoryAlias
